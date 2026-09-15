@@ -35,8 +35,8 @@ jobs:
             -e SONAR_TOKEN="$SONAR_TOKEN" \
             -v "$PWD:/usr/src" \
             sonarsource/sonar-scanner-cli \
-            -Dsonar.projectKey=react1 \
-            -Dsonar.projectName=react1 \
+            -Dsonar.projectKey=react \
+            -Dsonar.projectName=react \
             -Dsonar.sources=src \
             -Dsonar.host.url="$SONAR_HOST_URL" \
             -Dsonar.token="$SONAR_TOKEN"

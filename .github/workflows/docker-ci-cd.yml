@@ -6,87 +6,90 @@ on:
       - main
 
 jobs:
-  build-test-scan-push:
+  build-test-push-deploy:
     runs-on: self-hosted
 
     steps:
 
-      # 1. Checkout GitHub code
+      # 1. Checkout source code
       - name: Checkout code
         uses: actions/checkout@v4
 
       # 2. Check environment
-      - name: Check environment
+      - name: Check Docker environment
         run: |
-          echo "Hostname:"
           hostname
-          echo "User:"
           whoami
-          echo "Docker:"
           docker --version
-          echo "Docker Compose:"
           docker compose version
-          echo "Node:"
-          node --version
-          echo "NPM:"
-          npm --version
 
-      # 3. Install dependencies
-      - name: Install dependencies
+      # 3. Test React application
+      - name: Run React tests
         run: |
-          npm install
+          docker run --rm \
+            -v "$PWD:/app" \
+            -w /app \
+            -e CI=true \
+            node:9.6.1 \
+            bash -c "npm install && npm test -- --watchAll=false"
 
-      # 4. Run tests
-      - name: Run tests
-        run: |
-          CI=true npm test -- --watchAll=false
-
-      # 5. SonarQube scan
-      - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v6
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
-      # 6. Docker login to Nexus
-      - name: Login to Nexus
-        run: |
-          echo "${{ secrets.NEXUS_PASSWORD }}" | docker login \
-            ${{ secrets.NEXUS_URL }} \
-            -u "${{ secrets.NEXUS_USERNAME }}" \
-            --password-stdin
-
-      # 7. Build Docker image
+      # 4. Build Docker image using Dockerfile
       - name: Build Docker image
         run: |
           docker build \
-            -t ${{ secrets.NEXUS_URL }}/react-app:${{ github.sha }} \
-            -t ${{ secrets.NEXUS_URL }}/react-app:latest \
             -t ${{ secrets.DOCKERHUB_USERNAME }}/react-app:${{ github.sha }} \
             -t ${{ secrets.DOCKERHUB_USERNAME }}/react-app:latest \
             .
 
-      # 8. Push Docker image to Nexus
-      - name: Push image to Nexus
-        run: |
-          docker push ${{ secrets.NEXUS_URL }}/react-app:${{ github.sha }}
-          docker push ${{ secrets.NEXUS_URL }}/react-app:latest
-
-      # 9. Login to Docker Hub
+      # 5. Login to Docker Hub
       - name: Login to Docker Hub
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login \
             -u "${{ secrets.DOCKERHUB_USERNAME }}" \
             --password-stdin
 
-      # 10. Push Docker image to Docker Hub
-      - name: Push image to Docker Hub
+      # 6. Push Docker image to Docker Hub
+      - name: Push Docker image
         run: |
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/react-app:${{ github.sha }}
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/react-app:latest
 
-      # 11. Logout
+      # 7. Deploy to destination server
+      - name: Deploy to destination server
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+
+          echo "$EC2_SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+          ssh -i /tmp/deploy_key \
+            "$EC2_USER@$EC2_HOST" << 'EOF'
+
+            cd /opt/react-app
+
+            echo "Pulling latest Docker image..."
+            docker pull saratho56/react-app:latest
+
+            echo "Stopping old container..."
+            docker compose down
+
+            echo "Starting new container..."
+            docker compose up -d
+
+            echo "Deployment status:"
+            docker compose ps
+
+          EOF
+
+          rm -f /tmp/deploy_key
+
+      # 8. Logout
       - name: Docker logout
         run: |
-          docker logout ${{ secrets.NEXUS_URL }}
-          docker logout
+          docker logout || true

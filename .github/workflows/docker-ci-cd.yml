@@ -15,7 +15,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Verify Docker
+      # 2. Check Docker
       - name: Check Docker
         run: |
           hostname
@@ -23,7 +23,25 @@ jobs:
           docker --version
           docker compose version
 
-      # 3. Build Docker image
+      # 3. SonarQube Scan
+      - name: SonarQube Scan
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          docker run --rm \
+            --network host \
+            -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+            -e SONAR_TOKEN="$SONAR_TOKEN" \
+            -v "$PWD:/usr/src" \
+            sonarsource/sonar-scanner-cli \
+            -Dsonar.projectKey=react1 \
+            -Dsonar.projectName=react1 \
+            -Dsonar.sources=src \
+            -Dsonar.host.url="$SONAR_HOST_URL" \
+            -Dsonar.token="$SONAR_TOKEN"
+
+      # 4. Build Docker image
       - name: Build Docker image
         run: |
           docker build \
@@ -31,35 +49,77 @@ jobs:
             -t ${{ secrets.DOCKERHUB_USERNAME }}/react-app:latest \
             .
 
-      # 4. Login to Docker Hub
+      # 5. Login to Nexus
+      - name: Login to Nexus
+        env:
+          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+        run: |
+          echo "$NEXUS_PASSWORD" | docker login \
+            13.62.147.93:8082 \
+            -u "$NEXUS_USERNAME" \
+            --password-stdin
+
+      # 6. Tag image for Nexus
+      - name: Tag image for Nexus
+        run: |
+          docker tag \
+            ${{ secrets.DOCKERHUB_USERNAME }}/react-app:${{ github.sha }} \
+            13.62.147.93:8082/react-app:${{ github.sha }}
+
+          docker tag \
+            ${{ secrets.DOCKERHUB_USERNAME }}/react-app:latest \
+            13.62.147.93:8082/react-app:latest
+
+      # 7. Push image to Nexus
+      - name: Push image to Nexus
+        run: |
+          docker push 13.62.147.93:8082/react-app:${{ github.sha }}
+          docker push 13.62.147.93:8082/react-app:latest
+
+      # 8. Login to Docker Hub
       - name: Login to Docker Hub
         run: |
           echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login \
             -u "${{ secrets.DOCKERHUB_USERNAME }}" \
             --password-stdin
 
-      # 5. Push images to Docker Hub
-      - name: Push Docker image
+      # 9. Push image to Docker Hub
+      - name: Push image to Docker Hub
         run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/react-app:${{ github.sha }}
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/react-app:latest
+          docker push \
+            ${{ secrets.DOCKERHUB_USERNAME }}/react-app:${{ github.sha }}
 
-      # 6. Deploy to destination EC2
+          docker push \
+            ${{ secrets.DOCKERHUB_USERNAME }}/react-app:latest
+
+      # 10. Deploy to destination EC2
       - name: Deploy to destination server
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
-          mkdir -p ~/.ssh
+          set -e
 
-          echo "$EC2_SSH_KEY" > /tmp/deploy_key
-          chmod 600 /tmp/deploy_key
+          mkdir -p "$HOME/.ssh"
 
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+          KEY_FILE="$HOME/.ssh/deploy_key"
 
-          ssh -i /tmp/deploy_key \
+          printf '%s\n' "$EC2_SSH_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+
+          ssh-keygen -y -f "$KEY_FILE" > /dev/null
+
+          ssh-keyscan -H "$EC2_HOST" >> "$HOME/.ssh/known_hosts"
+
+          ssh \
+            -o StrictHostKeyChecking=yes \
+            -o BatchMode=yes \
+            -i "$KEY_FILE" \
             "$EC2_USER@$EC2_HOST" << 'EOF'
+
+            set -e
 
             cd /opt/react-app
 
@@ -77,4 +137,4 @@ jobs:
 
           EOF
 
-          rm -f /tmp/deploy_key
+          rm -f "$KEY_FILE"

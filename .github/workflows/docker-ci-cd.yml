@@ -6,20 +6,37 @@ on:
       - main
 
 jobs:
-  test-runner:
+  build-and-push:
     runs-on: self-hosted
 
     steps:
+
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Check server
-        run: |
-          echo "GitHub Actions is running on:"
-          hostname
-          whoami
 
       - name: Check Docker
         run: |
           docker --version
           docker compose version
+
+      - name: Login to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login \
+            -u "${{ secrets.DOCKERHUB_USERNAME }}" \
+            --password-stdin
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/react-app:latest \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/react-app:${{ github.sha }} \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/react-app:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/react-app:${{ github.sha }}
+
+      - name: Docker logout
+        run: |
+          docker logout

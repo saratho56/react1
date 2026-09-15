@@ -1,0 +1,25 @@
+name: React Docker CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  test-runner:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check server
+        run: |
+          echo "GitHub Actions is running on:"
+          hostname
+          whoami
+
+      - name: Check Docker
+        run: |
+          docker --version
+          docker compose version
